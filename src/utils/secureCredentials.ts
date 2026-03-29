@@ -42,6 +42,19 @@ class SecureCredentials {
       CLAUDE_WEBHOOK_SECRET: {
         file: process.env['CLAUDE_WEBHOOK_SECRET_FILE'] ?? '/run/secrets/claude_webhook_secret',
         env: 'CLAUDE_WEBHOOK_SECRET'
+      },
+      BITBUCKET_TOKEN: {
+        file: process.env['BITBUCKET_TOKEN_FILE'] ?? '/run/secrets/bitbucket_token',
+        env: 'BITBUCKET_TOKEN'
+      },
+      BITBUCKET_WEBHOOK_SECRET: {
+        file:
+          process.env['BITBUCKET_WEBHOOK_SECRET_FILE'] ?? '/run/secrets/bitbucket_webhook_secret',
+        env: 'BITBUCKET_WEBHOOK_SECRET'
+      },
+      BITBUCKET_WORKSPACE: {
+        file: process.env['BITBUCKET_WORKSPACE_FILE'] ?? '/run/secrets/bitbucket_workspace',
+        env: 'BITBUCKET_WORKSPACE'
       }
     };
 

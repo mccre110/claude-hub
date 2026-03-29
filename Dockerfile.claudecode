@@ -59,6 +59,15 @@ RUN ARCH=$(dpkg --print-architecture) && \
   sudo dpkg -i "git-delta_0.18.2_${ARCH}.deb" && \
   rm "git-delta_0.18.2_${ARCH}.deb"
 
+# Install bkt (Bitbucket CLI) for Bitbucket provider support
+RUN ARCH=$(dpkg --print-architecture) && \
+  BKT_ARCH=$([ "$ARCH" = "amd64" ] && echo "x86_64" || echo "aarch64") && \
+  BKT_URL="https://github.com/avivsinai/bitbucket-cli/releases/latest/download/bkt_Linux_${BKT_ARCH}.tar.gz" && \
+  wget -q "$BKT_URL" -O /tmp/bkt.tar.gz && \
+  tar -xzf /tmp/bkt.tar.gz -C /usr/local/bin bkt && \
+  chmod +x /usr/local/bin/bkt && \
+  rm /tmp/bkt.tar.gz
+
 RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.2.0/zsh-in-docker.sh)" -- \
   -p git \
   -p fzf \

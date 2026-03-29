@@ -38,7 +38,8 @@ export async function processCommand({
   command,
   isPullRequest = false,
   branchName = null,
-  operationType = 'default'
+  operationType = 'default',
+  provider = 'github'
 }: ClaudeCommandOptions): Promise<string> {
   try {
     logger.info(
@@ -53,12 +54,17 @@ export async function processCommand({
     );
 
     const githubToken = secureCredentials.get('GITHUB_TOKEN');
+    const bitbucketToken = secureCredentials.get('BITBUCKET_TOKEN');
 
-    // In test mode, skip execution and return a mock response
-    // Support both classic (ghp_) and fine-grained (github_pat_) GitHub tokens
+    // In test mode, skip execution and return a mock response.
+    // For GitHub: support classic (ghp_) and fine-grained (github_pat_) tokens.
+    // For Bitbucket: any non-empty token is considered valid.
+    const isBitbucket = provider === 'bitbucket';
     const isValidGitHubToken =
       githubToken && (githubToken.includes('ghp_') || githubToken.includes('github_pat_'));
-    if (process.env['NODE_ENV'] === 'test' || !isValidGitHubToken) {
+    const isValidToken = isBitbucket ? !!bitbucketToken : isValidGitHubToken;
+
+    if (process.env['NODE_ENV'] === 'test' || !isValidToken) {
       logger.info(
         {
           repo: repoFullName,
@@ -113,7 +119,8 @@ For real functionality, please configure valid GitHub and Claude API tokens.`;
       issueNumber,
       branchName,
       isPullRequest,
-      command
+      command,
+      provider
     });
 
     // Prepare environment variables for the container
@@ -124,7 +131,8 @@ For real functionality, please configure valid GitHub and Claude API tokens.`;
       branchName,
       operationType,
       fullPrompt,
-      githubToken
+      githubToken: githubToken ?? '',
+      provider
     });
 
     // Run the container
@@ -215,7 +223,7 @@ For real functionality, please configure valid GitHub and Claude API tokens.`;
         containerName,
         dockerArgs: sanitizedArgs,
         dockerImageName,
-        githubToken,
+        githubToken: githubToken ?? '',
         repoFullName,
         issueNumber
       });
@@ -234,7 +242,7 @@ function getEntrypointScript(): string {
 }
 
 /**
- * Create prompt based on operation type and context
+ * Create prompt based on operation type, provider context, and command.
  */
 function createPrompt({
   operationType,
@@ -242,7 +250,8 @@ function createPrompt({
   issueNumber,
   branchName,
   isPullRequest,
-  command
+  command,
+  provider = 'github'
 }: {
   operationType: OperationType;
   repoFullName: string;
@@ -250,8 +259,42 @@ function createPrompt({
   branchName: string | null;
   isPullRequest: boolean;
   command: string;
+  provider?: string;
 }): string {
+  const isBitbucket = provider === 'bitbucket';
+
   if (operationType === 'auto-tagging') {
+    if (isBitbucket) {
+      return `You are Claude, an AI assistant analyzing a Bitbucket issue for automatic classification.
+
+**Context:**
+- Repository: ${repoFullName}
+- Issue Number: #${issueNumber}
+- Operation: Auto-tagging (Read-only + Field update)
+
+**Available Tools:**
+- Read: Access repository files and issue content
+- Bash: Use 'bkt' CLI for issue field operations only
+
+**Task:**
+Analyze the issue and set appropriate fields using the bkt CLI:
+- Kind: bug, enhancement, proposal, task
+- Priority: trivial, minor, major, critical, blocker
+- Component: api, frontend, backend, database, auth, webhook, docker (if applicable)
+
+**Process:**
+1. Analyze the issue content
+2. Use 'bkt issue edit ${issueNumber} --kind <kind>' to set the kind
+3. Use 'bkt issue edit ${issueNumber} --priority <priority>' to set the priority
+4. Optionally set a component
+5. Do NOT comment on the issue - only update the fields
+
+**User Request:**
+${command}
+
+Complete the auto-tagging task using only the minimal required tools.`;
+    }
+
     return `You are Claude, an AI assistant analyzing a GitHub issue for automatic label assignment.
 
 **Context:**
@@ -273,15 +316,23 @@ Analyze the issue and apply appropriate labels using GitHub CLI commands. Use th
 **Process:**
 1. First run 'gh label list' to see available labels
 2. Analyze the issue content
-3. Use 'gh issue edit #{issueNumber} --add-label "label1,label2,label3"' to apply labels
+3. Use 'gh issue edit #${issueNumber} --add-label "label1,label2,label3"' to apply labels
 4. Do NOT comment on the issue - only apply labels
 
 **User Request:**
 ${command}
 
 Complete the auto-tagging task using only the minimal required tools.`;
-  } else {
-    return `You are ${process.env.BOT_USERNAME}, an AI assistant responding to a GitHub ${isPullRequest ? 'pull request' : 'issue'}.
+  }
+
+  // Default / general operation
+  const cliTool = isBitbucket ? 'bkt' : 'gh';
+  const platform = isBitbucket ? 'Bitbucket' : 'GitHub';
+  const commentCmd = isBitbucket
+    ? `'bkt issue comment' or 'bkt pr comment'`
+    : `'gh issue comment' or 'gh pr comment'`;
+
+  return `You are ${process.env.BOT_USERNAME}, an AI assistant responding to a ${platform} ${isPullRequest ? 'pull request' : 'issue'}.
 
 **Context:**
 - Repository: ${repoFullName}
@@ -290,7 +341,7 @@ Complete the auto-tagging task using only the minimal required tools.`;
 - Running in: Unattended mode
 
 **Important Instructions:**
-1. You have full GitHub CLI access via the 'gh' command
+1. You have full ${platform} CLI access via the '${cliTool}' command
 2. When writing code:
    - Always create a feature branch for new work
    - Make commits with descriptive messages
@@ -300,24 +351,23 @@ Complete the auto-tagging task using only the minimal required tools.`;
    - Create a pull request if appropriate
 3. Iterate until the task is complete - don't stop at partial solutions
 4. Always check in your work by pushing to the remote before finishing
-5. Use 'gh issue comment' or 'gh pr comment' to provide updates on your progress
+5. Use ${commentCmd} to provide updates on your progress
 6. If you encounter errors, debug and fix them before completing
 7. **IMPORTANT - Markdown Formatting:**
    - When your response contains markdown (like headers, lists, code blocks), return it as properly formatted markdown
    - Do NOT escape or encode special characters like newlines (\\n) or quotes
-   - Return clean, human-readable markdown that GitHub will render correctly
+   - Return clean, human-readable markdown that ${platform} will render correctly
    - Your response should look like normal markdown text, not escaped strings
 8. **Request Acknowledgment:**
    - For larger or complex tasks that will take significant time, first acknowledge the request
    - Post a brief comment like "I understand. Working on [task description]..." before starting
-   - Use 'gh issue comment' or 'gh pr comment' to post this acknowledgment immediately
+   - Use ${commentCmd} to post this acknowledgment immediately
    - This lets the user know their request was received and is being processed
 
 **User Request:**
 ${command}
 
 Please complete this task fully and autonomously.`;
-  }
 }
 
 /**
@@ -330,7 +380,8 @@ function createEnvironmentVars({
   branchName,
   operationType,
   fullPrompt,
-  githubToken
+  githubToken,
+  provider = 'github'
 }: {
   repoFullName: string;
   issueNumber: number | null;
@@ -339,8 +390,9 @@ function createEnvironmentVars({
   operationType: OperationType;
   fullPrompt: string;
   githubToken: string;
+  provider?: string;
 }): ClaudeEnvironmentVars {
-  return {
+  const base: ClaudeEnvironmentVars = {
     REPO_FULL_NAME: repoFullName,
     ISSUE_NUMBER: issueNumber?.toString() ?? '',
     IS_PULL_REQUEST: isPullRequest ? 'true' : 'false',
@@ -350,8 +402,25 @@ function createEnvironmentVars({
     GITHUB_TOKEN: githubToken,
     ANTHROPIC_API_KEY: secureCredentials.get('ANTHROPIC_API_KEY') ?? '',
     BOT_USERNAME: process.env.BOT_USERNAME,
-    BOT_EMAIL: process.env.BOT_EMAIL
+    BOT_EMAIL: process.env.BOT_EMAIL,
+    PROVIDER: provider
   };
+
+  if (provider === 'bitbucket') {
+    const bbToken = secureCredentials.get('BITBUCKET_TOKEN');
+    if (bbToken) base['BITBUCKET_TOKEN'] = bbToken;
+
+    const bbUsername = process.env['BITBUCKET_USERNAME'];
+    if (bbUsername) base['BITBUCKET_USERNAME'] = bbUsername;
+
+    const bbWorkspace =
+      process.env['BITBUCKET_WORKSPACE'] ??
+      secureCredentials.get('BITBUCKET_WORKSPACE') ??
+      undefined;
+    if (bbWorkspace) base['BITBUCKET_WORKSPACE'] = bbWorkspace;
+  }
+
+  return base;
 }
 
 /**
@@ -481,7 +550,8 @@ function sanitizeDockerArgs(dockerArgs: string[]): string[] {
         'ANTHROPIC_API_KEY',
         'AWS_ACCESS_KEY_ID',
         'AWS_SECRET_ACCESS_KEY',
-        'AWS_SESSION_TOKEN'
+        'AWS_SESSION_TOKEN',
+        'BITBUCKET_TOKEN'
       ];
       if (sensitiveKeys.includes(envKey)) {
         return `${envKey}=[REDACTED]`;

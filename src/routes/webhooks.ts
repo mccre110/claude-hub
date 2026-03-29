@@ -19,6 +19,10 @@ if (process.env.NODE_ENV !== 'test') {
   import('../providers/claude').catch(err => {
     logger.error({ err }, 'Failed to initialize Claude provider');
   });
+
+  import('../providers/bitbucket').catch(err => {
+    logger.error({ err }, 'Failed to initialize Bitbucket provider');
+  });
 }
 
 /**

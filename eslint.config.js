@@ -81,6 +81,7 @@ module.exports = [
     },
     rules: {
       // Disable base rules that are covered by TypeScript equivalents
+      'no-undef': 'off', // TypeScript's type checker handles this more accurately
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { 'argsIgnorePattern': '^_', 'varsIgnorePattern': '^_', 'caughtErrorsIgnorePattern': '^_' }],
       
@@ -151,6 +152,7 @@ module.exports = [
       '@typescript-eslint': tseslint
     },
     rules: {
+      'no-undef': 'off', // TypeScript's type checker handles this more accurately
       'no-console': 'off',
       '@typescript-eslint/no-explicit-any': 'off' // Allow any in tests for mocking
     }

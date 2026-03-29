@@ -1,5 +1,7 @@
 export type OperationType = 'auto-tagging' | 'pr-review' | 'manual-pr-review' | 'default';
 
+export type WebhookProvider = 'github' | 'bitbucket';
+
 export interface ClaudeCommandOptions {
   repoFullName: string;
   issueNumber: number | null;
@@ -7,6 +9,8 @@ export interface ClaudeCommandOptions {
   isPullRequest?: boolean;
   branchName?: string | null;
   operationType?: OperationType;
+  /** Source provider — controls authentication and CLI tool selection inside the container. Defaults to 'github'. */
+  provider?: WebhookProvider;
 }
 
 export interface ClaudeProcessResult {
@@ -43,6 +47,11 @@ export interface ClaudeEnvironmentVars {
   ANTHROPIC_API_KEY: string;
   BOT_USERNAME?: string;
   BOT_EMAIL?: string;
+  /** "github" (default) or "bitbucket" */
+  PROVIDER?: string;
+  BITBUCKET_TOKEN?: string;
+  BITBUCKET_USERNAME?: string;
+  BITBUCKET_WORKSPACE?: string;
 }
 
 export interface DockerExecutionOptions {

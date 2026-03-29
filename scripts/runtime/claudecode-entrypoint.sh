@@ -53,23 +53,47 @@ else
   echo "WARNING: No Claude authentication source found at /home/node/.claude." >&2
 fi
 
-# Configure GitHub authentication
-if [ -n "${GITHUB_TOKEN}" ]; then
-  export GH_TOKEN="${GITHUB_TOKEN}"
-  echo "${GITHUB_TOKEN}" | sudo -u node gh auth login --with-token
-  sudo -u node gh auth setup-git
-else
-  echo "No GitHub token provided, skipping GitHub authentication"
-fi
+# Configure authentication and clone repository based on provider
+if [ "${PROVIDER}" = "bitbucket" ]; then
+  # ── Bitbucket authentication ──────────────────────────────────────────────
+  if [ -n "${BITBUCKET_TOKEN}" ] && [ -n "${BITBUCKET_USERNAME}" ]; then
+    echo "Authenticating with Bitbucket via bkt..." >&2
+    sudo -u node bkt auth login https://bitbucket.org \
+      --kind cloud \
+      --username "${BITBUCKET_USERNAME}" \
+      --token "${BITBUCKET_TOKEN}" || echo "WARNING: bkt auth login failed" >&2
+  else
+    echo "WARNING: BITBUCKET_TOKEN or BITBUCKET_USERNAME not provided; skipping bkt auth" >&2
+  fi
 
-# Clone the repository as node user
-if [ -n "${GITHUB_TOKEN}" ] && [ -n "${REPO_FULL_NAME}" ]; then
-  echo "Cloning repository ${REPO_FULL_NAME}..." >&2
-  sudo -u node git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_FULL_NAME}.git" /workspace/repo >&2
-  cd /workspace/repo
+  if [ -n "${BITBUCKET_TOKEN}" ] && [ -n "${BITBUCKET_USERNAME}" ] && [ -n "${REPO_FULL_NAME}" ]; then
+    echo "Cloning Bitbucket repository ${REPO_FULL_NAME}..." >&2
+    sudo -u node git clone \
+      "https://${BITBUCKET_USERNAME}:${BITBUCKET_TOKEN}@bitbucket.org/${REPO_FULL_NAME}.git" \
+      /workspace/repo >&2
+    cd /workspace/repo
+  else
+    echo "Skipping Bitbucket repository clone - missing credentials or repository name" >&2
+    cd /workspace
+  fi
 else
-  echo "Skipping repository clone - missing GitHub token or repository name" >&2
-  cd /workspace
+  # ── GitHub authentication (default) ──────────────────────────────────────
+  if [ -n "${GITHUB_TOKEN}" ]; then
+    export GH_TOKEN="${GITHUB_TOKEN}"
+    echo "${GITHUB_TOKEN}" | sudo -u node gh auth login --with-token
+    sudo -u node gh auth setup-git
+  else
+    echo "No GitHub token provided, skipping GitHub authentication"
+  fi
+
+  if [ -n "${GITHUB_TOKEN}" ] && [ -n "${REPO_FULL_NAME}" ]; then
+    echo "Cloning repository ${REPO_FULL_NAME}..." >&2
+    sudo -u node git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_FULL_NAME}.git" /workspace/repo >&2
+    cd /workspace/repo
+  else
+    echo "Skipping repository clone - missing GitHub token or repository name" >&2
+    cd /workspace
+  fi
 fi
 
 # Checkout the correct branch based on operation type
@@ -115,19 +139,32 @@ RESPONSE_FILE="/workspace/response.txt"
 touch "${RESPONSE_FILE}"
 chown node:node "${RESPONSE_FILE}"
 
-# Determine allowed tools based on operation type
+# Determine allowed tools based on operation type and provider
 if [ "${OPERATION_TYPE}" = "auto-tagging" ]; then
-    ALLOWED_TOOLS="Read,GitHub,Bash(gh issue edit:*),Bash(gh issue view:*),Bash(gh label list:*)"  # Minimal tools for auto-tagging (security)
-    echo "Running Claude Code for auto-tagging with minimal tools..." >&2
+    if [ "${PROVIDER}" = "bitbucket" ]; then
+        ALLOWED_TOOLS="Read,Bash(bkt issue edit:*),Bash(bkt issue view:*)"
+        echo "Running Claude Code for Bitbucket auto-tagging with minimal tools..." >&2
+    else
+        ALLOWED_TOOLS="Read,GitHub,Bash(gh issue edit:*),Bash(gh issue view:*),Bash(gh label list:*)"
+        echo "Running Claude Code for auto-tagging with minimal tools..." >&2
+    fi
 elif [ "${OPERATION_TYPE}" = "pr-review" ] || [ "${OPERATION_TYPE}" = "manual-pr-review" ]; then
     # PR Review: Broad research access + controlled write access
-    # Read access: Full file system, git history, GitHub data
-    # Write access: GitHub comments/reviews, PR labels, but no file deletion/modification
-    ALLOWED_TOOLS="Read,GitHub,Bash(gh:*),Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git blame:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(ls:*),Bash(tree:*)"
-    echo "Running Claude Code for PR review with broad research access..." >&2
+    if [ "${PROVIDER}" = "bitbucket" ]; then
+        ALLOWED_TOOLS="Read,Bash(bkt:*),Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git blame:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(ls:*),Bash(tree:*)"
+        echo "Running Claude Code for Bitbucket PR review with broad research access..." >&2
+    else
+        ALLOWED_TOOLS="Read,GitHub,Bash(gh:*),Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git blame:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(ls:*),Bash(tree:*)"
+        echo "Running Claude Code for PR review with broad research access..." >&2
+    fi
 else
-    ALLOWED_TOOLS="Bash,Create,Edit,Read,Write,GitHub"  # Full tools for general operations
-    echo "Running Claude Code with full tool access..." >&2
+    if [ "${PROVIDER}" = "bitbucket" ]; then
+        ALLOWED_TOOLS="Bash,Create,Edit,Read,Write"  # No GitHub tool for Bitbucket; use bkt via Bash
+        echo "Running Claude Code for Bitbucket with full tool access..." >&2
+    else
+        ALLOWED_TOOLS="Bash,Create,Edit,Read,Write,GitHub"  # Full tools for general GitHub operations
+        echo "Running Claude Code with full tool access..." >&2
+    fi
 fi
 
 # Check if command exists
@@ -157,6 +194,9 @@ if [ "${OUTPUT_FORMAT}" = "stream-json" ]; then
       ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
       GH_TOKEN="${GITHUB_TOKEN}" \
       GITHUB_TOKEN="${GITHUB_TOKEN}" \
+      BITBUCKET_TOKEN="${BITBUCKET_TOKEN}" \
+      BITBUCKET_USERNAME="${BITBUCKET_USERNAME}" \
+      BITBUCKET_WORKSPACE="${BITBUCKET_WORKSPACE}" \
       BASH_DEFAULT_TIMEOUT_MS="${BASH_DEFAULT_TIMEOUT_MS}" \
       BASH_MAX_TIMEOUT_MS="${BASH_MAX_TIMEOUT_MS}" \
       /usr/local/share/npm-global/bin/claude \
@@ -172,6 +212,9 @@ else
       ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
       GH_TOKEN="${GITHUB_TOKEN}" \
       GITHUB_TOKEN="${GITHUB_TOKEN}" \
+      BITBUCKET_TOKEN="${BITBUCKET_TOKEN}" \
+      BITBUCKET_USERNAME="${BITBUCKET_USERNAME}" \
+      BITBUCKET_WORKSPACE="${BITBUCKET_WORKSPACE}" \
       BASH_DEFAULT_TIMEOUT_MS="${BASH_DEFAULT_TIMEOUT_MS}" \
       BASH_MAX_TIMEOUT_MS="${BASH_MAX_TIMEOUT_MS}" \
       /usr/local/share/npm-global/bin/claude \
